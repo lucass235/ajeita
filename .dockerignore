@@ -1,0 +1,9 @@
+node_modules
+.env
+data/
+.wwebjs_auth
+.wwebjs_cache
+.git
+*.zip
+.coverage
+__pycache__

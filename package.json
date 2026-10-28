@@ -1,0 +1,29 @@
+{
+  "name": "ajeita-whatsapp",
+  "version": "0.2.0",
+  "private": true,
+  "description": "AJEITA: downloader experimental no WhatsApp, independente do App_OS.",
+  "main": "src/bot.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "login:tiktok": "node scripts/login-tiktok.js",
+    "postinstall": "node scripts/patch-whatsapp-web.js",
+    "start": "node src/bot.js",
+    "test": "node --test tests/*.test.js",
+    "check": "node --check src/bot.js && node --check src/downloader.js && node --check src/link.js && node --check src/status.js && node --check src/gcs-store.js && node --check src/remote-auth.js && node --check src/runtime-auth.js && node --check src/browser-health.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "qrcode-terminal": "^0.12.0",
+    "qrcode": "^1.5.4",
+    "whatsapp-web.js": "1.34.7",
+    "@google-cloud/storage": "^7.17.3",
+    "archiver": "^7.0.1",
+    "unzipper": "^0.12.3",
+    "fs-extra": "^11.3.1"
+  },
+  "license": "UNLICENSED"
+}
+

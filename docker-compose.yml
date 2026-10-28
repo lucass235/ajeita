@@ -1,0 +1,21 @@
+services:
+  ajeita:
+    build: .
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    environment:
+      CHROME_PATH: /usr/bin/chromium
+      CHROME_NO_SANDBOX: "true"
+      AUTH_DATA_PATH: /data/whatsapp
+      PYTHON_BIN: /opt/venv/bin/python
+      PORT: 3000
+      TIKTOK_COOKIES_FILE: /auth/tiktok/cookies.txt
+    volumes:
+      - ajeita_auth:/data
+      - ./data/tiktok:/auth/tiktok:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    shm_size: "256mb"
+volumes:
+  ajeita_auth:
