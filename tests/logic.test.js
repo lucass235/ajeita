@@ -7,10 +7,17 @@ const { downloadVideo, getFriendlyError } = require('../src/downloader');
 const { runProcess } = require('../src/downloader');
 const { createStatusServer } = require('../src/status');
 
-test('ajeita aceita qualquer maiuscula/minuscula e nao dispara em frases', () => {
-  for (const txt of ['ajeita', 'AJEITA', 'Ajeita', '  ajeita  ']) assert.equal(isAjeita(txt), true);
-  assert.equal(isAjeita('ajeita https://www.tiktok.com/@teste/video/1'), true);
-  for (const txt of ['ajeita aqui', '/baixar', 'desajeita', 'ajeita para mim']) assert.equal(isAjeita(txt), false);
+test('ajeita aceita frases naturais e erros ortograficos seguros', () => {
+  for (const txt of [
+    'ajeita', 'AJEITA', 'Ajeita', '  ajeita  ',
+    'ajeita por favor', 'pode ajeitar?', 'ajeita ai', 'por favor, ajeite isso',
+    'ageita', 'pode ageitar pra mim?', 'ajeitaa!',
+    'ajeita https://www.tiktok.com/@teste/video/1'
+  ]) assert.equal(isAjeita(txt), true, txt);
+  for (const txt of [
+    '/baixar', 'desajeita', 'aceita isso?', 'jeita',
+    'esta mensagem apenas comenta uma coisa muito longa sobre a palavra ajeita sem fazer um pedido direto para baixar qualquer video agora'
+  ]) assert.equal(isAjeita(txt), false, txt);
 });
 test('somente facebook, tiktok e instagram', () => {
   assert.match(normalizeLink('https://vm.tiktok.com/ABCDE/'), /^https/);

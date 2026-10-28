@@ -34,7 +34,22 @@ function extractVideoLink(body) {
 }
 
 function isAjeita(body) {
-  return typeof body === 'string' && /^ajeita(?:[.!?]?|\s+https?:\/\/\S+)$/i.test(body.trim());
+  if (typeof body !== 'string') return false;
+  const text = body
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+  if (!text || text.length > 180) return false;
+
+  // O link nao conta como parte da frase do comando.
+  const withoutLinks = text.replace(/https?:\/\/\S+/g, ' ').trim();
+  const words = withoutLinks.match(/[a-z]+/g) || [];
+  if (words.length === 0 || words.length > 12) return false;
+
+  // Inclui formas naturais e o erro comum com G, mas evita aproximacao generica
+  // que poderia confundir palavras como "aceita" com um pedido de download.
+  return words.some(word => /^(?:a[gj]eita+r?|a[gj]eite)$/.test(word));
 }
 
 async function findLinkForCommand(command, chat, { maxAgeHours = 72, now = Date.now() } = {}) {

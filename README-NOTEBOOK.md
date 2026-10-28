@@ -118,7 +118,8 @@ Resultado esperado:
 ## 7. Testar
 
 1. Envie um link publico do TikTok, Instagram ou Facebook.
-2. Envie `ajeita` na mesma conversa.
+2. Envie `ajeita` na mesma conversa. Frases como `ajeita por favor`,
+   `pode ajeitar?`, `ajeita ai` e o erro comum `ageita` tambem funcionam.
 3. O bot deve responder `perai` e depois enviar o video.
 
 Grupos permanecem desativados enquanto `ALLOW_GROUPS=false`.
