@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY scripts ./scripts
+RUN sed -i 's/\r$//' /app/scripts/*.sh
 RUN npm ci --omit=dev --no-audit --no-fund
 COPY src ./src
 RUN mkdir -p /data/whatsapp && chown -R node:node /app /data/whatsapp
