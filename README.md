@@ -1,5 +1,8 @@
 # AJEITA — continuidade e implantacao controlada
 
+**Instalacao em notebook Windows:** siga o passo a passo completo em
+[README-NOTEBOOK.md](README-NOTEBOOK.md).
+
 **Railway (24/10/2026):** deploy ativo, WhatsApp pareado e status `ready`.
 Teste no plano atual com 1 vCPU, 1 GB de memoria e volume persistente de 500 MB.
 O bot local esta pausado. Veja [estado e validacao](railway/DEPLOY.md).
