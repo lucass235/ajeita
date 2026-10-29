@@ -37,7 +37,7 @@ Servico independente do App_OS. Nada neste diretorio e importado pelo App_OS. A 
 - Tambem aceita **ajeita LINK** na mesma mensagem.
 - Reconhece pedidos naturais como **ajeita por favor**, **pode ajeitar?** e
   **ajeita ai**, alem do erro comum **ageita**.
-- Aguarda 10 segundos antes do aviso e do download (`REQUEST_DELAY_SECONDS=10`). Com SEND_PROGRESS=true, responde **perai** e depois envia o video, sem legenda. Se ocorrer um erro, espera 5 segundos e responde **eita deu alguma bronca aqui nesse video, nao conseguir baixar**. Os detalhes do erro ficam apenas nos logs.
+- Aguarda 10 segundos antes do aviso e do download (`REQUEST_DELAY_SECONDS=10`). Com SEND_PROGRESS=true (padrao), responde **perai**, espera 5 segundos e inicia o download. Videos acima de 1min30s sao enviados em partes de ate 90 segundos, com as legendas **Parte 1 👆**, **Parte 2 👆** e assim por diante. Ha uma pausa de 5 segundos apos cada envio, inclusive avisos e erros. Videos de ate 90 segundos continuam sem legenda. Se ocorrer um erro, espera 5 segundos e responde **eita deu alguma bronca aqui nesse video, nao conseguir baixar**. Os detalhes do erro ficam apenas nos logs.
 - Antes do envio, confere os codecs com FFprobe e converte MP4 incompativel (ex.: HEVC/HE-AAC do TikTok) para H.264/AAC-LC com FFmpeg. O limite de tamanho tambem vale para o arquivo convertido.
 - A conversao limita o lado maior a 1280 pixels e ajusta o bitrate para manter o video abaixo de 14 MiB quando possivel, permitindo reproduzir diretamente na conversa.
 - Em grupos, o uso deve ser habilitado com ALLOW_GROUPS=true. Na primeira configuracao mantenha false.

@@ -68,7 +68,7 @@ function getFriendlyError(error) {
   return 'Nao consegui baixar ou enviar esse video. Tente um video publico menor.';
 }
 
-async function prepareWhatsAppVideo(filepath, { timeoutMs = 180000, maxDurationSeconds = 1200, maxFileMB = 45 } = {}) {
+async function prepareWhatsAppVideo(filepath, { timeoutMs = 180000, maxDurationSeconds = 1200, maxFileMB = 45, startSeconds, clipSeconds, outputPath } = {}) {
   const probe = JSON.parse(await runProcess('ffprobe', [
     '-v', 'error', '-show_entries',
     'stream=codec_name,codec_type,profile,pix_fmt,width,height:format=duration,size', '-of', 'json', filepath
@@ -87,16 +87,19 @@ async function prepareWhatsAppVideo(filepath, { timeoutMs = 180000, maxDurationS
   // Ficar abaixo de 14 MiB permite enviar como video reproduzivel no chat,
   // sem precisar usar o envio como documento para videos maiores.
   const targetFileMB = Math.min(maxFileMB, 13.5);
-  if (compatibleVideo && compatibleAudio && Number(probe.format?.size) <= targetFileMB * 1024 * 1024) return filepath;
+  if (clipSeconds === undefined && compatibleVideo && compatibleAudio && Number(probe.format?.size) <= targetFileMB * 1024 * 1024) return filepath;
 
-  const output = path.join(path.dirname(filepath), 'whatsapp.mp4');
-  const duration = Number(probe.format?.duration);
+  const output = outputPath || path.join(path.dirname(filepath), 'whatsapp.mp4');
+  const duration = clipSeconds ?? Number(probe.format?.duration);
   // Reserva espaco para audio e container, limitando o bitrate do H.264.
   const maxBitrate = duration > 0
     ? Math.max(64000, Math.floor(targetFileMB * 1024 * 1024 * 8 * 0.9 / duration) - 128000)
     : 2500000;
   await runProcess('ffmpeg', [
-    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-i', filepath,
+    '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
+    ...(startSeconds !== undefined ? ['-ss', String(startSeconds)] : []), '-i', filepath,
+    // FPS fixo evita um ultimo frame ultrapassar os 90s em fontes VFR.
+    ...(clipSeconds !== undefined ? ['-t', String(clipSeconds), '-r', '30'] : []),
     '-map', '0:v:0', '-map', '0:a:0?',
     '-vf', "scale=w='min(1280,iw)':h='min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2",
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '25', '-threads', '2',
@@ -106,6 +109,30 @@ async function prepareWhatsAppVideo(filepath, { timeoutMs = 180000, maxDurationS
     '-movflags', '+faststart', output
   ], { timeoutMs });
   return output;
+}
+
+async function prepareWhatsAppParts(filepath, options = {}) {
+  const probe = JSON.parse(await runProcess('ffprobe', [
+    '-v', 'error', '-show_entries', 'format=duration', '-of', 'json', filepath
+  ], { timeoutMs: 30000 }));
+  const duration = Number(probe.format?.duration);
+  if (!Number.isFinite(duration) || duration <= 0) throw new Error('Duracao do video invalida.');
+  if (duration > (options.maxDurationSeconds ?? 1200)) throw new Error('O video excede o limite de duracao configurado.');
+  const parts = [];
+  for (let start = 0; start < duration; start += 90) {
+    const output = await prepareWhatsAppVideo(filepath, {
+      ...options,
+      ...(duration > 90 ? {
+        startSeconds: start, clipSeconds: Math.min(90, duration - start),
+        outputPath: path.join(path.dirname(filepath), `parte-${parts.length + 1}.mp4`)
+      } : {})
+    });
+    const stats = await fs.stat(output);
+    if (stats.size === 0) throw new Error('Video gerado vazio.');
+    if (stats.size > (options.maxFileMB ?? 45) * 1024 * 1024) throw new Error('O arquivo e maior que o limite configurado.');
+    parts.push({ filepath: output, bytes: stats.size });
+  }
+  return parts;
 }
 
 async function downloadVideo(link, options = {}) {
@@ -154,20 +181,17 @@ async function downloadVideo(link, options = {}) {
     const files = await fs.readdir(tempDir);
     const filename = files.find(file => /^video.*\.mp4$/i.test(file));
     if (!filename) throw new Error('Video MP4 nao foi gerado. Confira FFmpeg.');
-    const filepath = await prepareWhatsAppVideo(path.join(tempDir, filename), {
+    const parts = await prepareWhatsAppParts(path.join(tempDir, filename), {
       timeoutMs: timeoutSeconds * 1000,
       maxDurationSeconds,
       maxFileMB
     });
-    const stats = await fs.stat(filepath);
-    if (stats.size > maxFileMB * 1024 * 1024) throw new Error('O arquivo e maior que o limite configurado.');
-    if (stats.size === 0) throw new Error('Video gerado vazio.');
-    return { filepath, bytes: stats.size, cleanup: () => fs.rm(tempDir, { recursive: true, force: true }) };
+    return { parts, bytes: parts.reduce((sum, part) => sum + part.bytes, 0), cleanup: () => fs.rm(tempDir, { recursive: true, force: true }) };
   } catch (error) {
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
     throw error;
   }
 }
 
-module.exports = { downloadVideo, getFriendlyError, runProcess, prepareWhatsAppVideo };
+module.exports = { downloadVideo, getFriendlyError, runProcess, prepareWhatsAppVideo, prepareWhatsAppParts };
 

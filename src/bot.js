@@ -23,7 +23,7 @@ function numSetting(name, fallback, min, max) {
 const settings = {
   allowOtherPeople: boolSetting('ALLOW_OTHER_PEOPLE', true),
   allowGroups: boolSetting('ALLOW_GROUPS', false),
-  sendProgress: boolSetting('SEND_PROGRESS', false),
+  sendProgress: boolSetting('SEND_PROGRESS', true),
   requestDelaySeconds: numSetting('REQUEST_DELAY_SECONDS', 10, 0, 300),
   chromeNoSandbox: boolSetting('CHROME_NO_SANDBOX', false),
   maxFileMB: numSetting('MAX_FILE_MB', 45, 1, 100),
@@ -183,8 +183,23 @@ const queue = [];
 let working = false;
 let resolving = 0;
 
+// Serializa todos os envios, inclusive avisos e erros de pedidos concorrentes.
+let outgoing = Promise.resolve();
+function pacedSend(chatId, body, options, timeoutMs, timeoutMessage) {
+  const task = outgoing.then(async () => {
+    if (shuttingDown) return;
+    try {
+      return await withTimeout(client.sendMessage(chatId, body, options), timeoutMs, timeoutMessage);
+    } finally {
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+  });
+  outgoing = task.catch(() => {});
+  return task;
+}
+
 async function safeText(chatId, body) {
-  try { await withTimeout(client.sendMessage(chatId, body, { linkPreview: false, sendSeen:false, waitUntilMsgSent:true }),10000,'Envio de texto sem resposta'); }
+  try { await pacedSend(chatId, body, { linkPreview: false, sendSeen:false, waitUntilMsgSent:true },10000,'Envio de texto sem resposta'); }
   catch (err) { console.error('Falha enviando mensagem:', err.message); }
 }
 
@@ -225,14 +240,18 @@ async function processJob(job) {
     result = await downloadVideo(job.link, settings);
     console.log('Video preparado para WhatsApp: ' + Math.round(result.bytes / 1024) + ' KB');
     stage = 'envio ao WhatsApp';
-    const media = MessageMedia.fromFilePath(result.filepath);
-    const sent = await withTimeout(client.sendMessage(job.chatId, media, {
-      sendMediaAsDocument: result.bytes > 14 * 1024 * 1024,
-      sendSeen: false,
-      waitUntilMsgSent: true
-    }),90000,'Envio do video sem resposta do WhatsApp');
-    if (!sent?.id) throw new Error('WhatsApp nao confirmou a criacao da mensagem.');
-    console.log('Video enviado: ' + Math.round(result.bytes / 1024) + ' KB');
+    for (const [index, part] of result.parts.entries()) {
+      if (shuttingDown) break;
+      const media = MessageMedia.fromFilePath(part.filepath);
+      const sent = await pacedSend(job.chatId, media, {
+        ...(result.parts.length > 1 ? { caption: `Parte ${index + 1} \u{1F446}` } : {}),
+        sendMediaAsDocument: part.bytes > 14 * 1024 * 1024,
+        sendSeen: false,
+        waitUntilMsgSent: true
+      },90000,'Envio do video sem resposta do WhatsApp');
+      if (!sent?.id) throw new Error('WhatsApp nao confirmou a criacao da mensagem.');
+      console.log('Video enviado: ' + Math.round(part.bytes / 1024) + ' KB');
+    }
   } catch (error) {
     console.error('Falha em ' + stage + ':', error);
     await sendErrorFeedback(job.chatId);

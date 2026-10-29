@@ -6,9 +6,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 
-function boot(env = {}) {
-  env = {REQUEST_DELAY_SECONDS:'0', ...env};
-  const sent = [], downloads = [];
+function boot(env = {}, parts = [{filepath:"fixture.mp4",bytes:10}]) {
+  env = {REQUEST_DELAY_SECONDS:'0', SEND_PROGRESS:'false', ...env};
+  const sent = [], downloads = [], pauses = [];
   let client;
   class Client extends EventEmitter {
     constructor() { super(); client = this; }
@@ -26,14 +26,14 @@ function boot(env = {}) {
     './runtime-auth': {prepareRuntimeAuth:async()=>{}},
     './browser-health': {},
     './downloader': {getFriendlyError:()=> 'Falha', downloadVideo:async link=>{
-      downloads.push(link); return {filepath:'fixture.mp4',bytes:10,cleanup:async()=>{}};
+      downloads.push(link); return {parts,bytes:10,cleanup:async()=>{}};
     }}
   };
   const script = fs.readFileSync(path.join(__dirname,'../src/bot.js'),'utf8');
   vm.runInNewContext(script, {require:name=>modules[name], process:{env,platform:process.platform,on(){}},
-    console:{log(){},warn(){},error(){}},setTimeout,clearTimeout,URL});
+    console:{log(){},warn(){},error(){}},setTimeout:(fn,ms)=>{ if(ms===5000) { pauses.push(ms); fn(); return; } return setTimeout(fn,ms); },clearTimeout,URL});
   client.emit('ready');
-  return {client,sent,downloads,handle:client.listeners('message_create')[0]};
+  return {client,sent,downloads,pauses,handle:client.listeners('message_create')[0]};
 }
 function message(chatId, fromMe, id, extras = {}) {
   const timestamp = Date.now()/1000;
@@ -77,4 +77,15 @@ test('consulta concorrente reserva capacidade antes do download',async()=>{
   release([{timestamp:firstMessage.timestamp-1,body:'https://fb.watch/video'}]);
   await first; await settle();
   assert.equal(bot.downloads.length,1);
+});
+
+test('envia partes numeradas e pausa depois do aviso e de cada video',async()=>{
+  const bot=boot({SEND_PROGRESS:'true'},[
+    {filepath:'parte-1.mp4',bytes:10}, {filepath:'parte-2.mp4',bytes:10}, {filepath:'parte-3.mp4',bytes:10}
+  ]);
+  await bot.handle(message('a@c.us',false,'parts'));
+  await settle();
+  assert.equal(bot.sent[0].body,'perai');
+  assert.deepEqual(bot.sent.slice(1).map(x=>x.options.caption),['Parte 1 \u{1F446}','Parte 2 \u{1F446}','Parte 3 \u{1F446}']);
+  assert.equal(bot.pauses.length,4);
 });
