@@ -92,7 +92,8 @@ function createStatusServer({ port, adminToken, getStatus, getDiagnostics, getLo
       res.writeHead(500).end('Falha ao gerar QR');
     }
   });
-  server.listen(port, '0.0.0.0', () => console.log('Painel /pair e /healthz na porta ' + port));
+  const host = process.env.HOST || '0.0.0.0';
+  server.listen(port, host, () => console.log('Painel /pair, /logs e /healthz em ' + host + ':' + port));
   return server;
 }
 module.exports = { authorized, createStatusServer };

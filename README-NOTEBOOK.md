@@ -195,6 +195,18 @@ docker compose logs --tail=200 ajeita
 Videos privados, removidos, protegidos por DRM ou que exigem login podem nao
 funcionar.
 
+## Modo local sem Docker (Windows)
+
+Alternativa mais leve: o bot roda direto com Node, sem Docker Desktop.
+
+- Requisitos: Node 22, ffmpeg (`winget install Gyan.FFmpeg`), Chrome, e um venv com
+  yt-dlp em `.venv` (`python -m venv .venv` e `.venv\Scripts\python -m pip install "yt-dlp[default]" curl_cffi`).
+- No `.env`: `PORT`, `HOST=127.0.0.1`, `PYTHON_BIN`, `CHROME_PATH` e `AUTH_DATA_PATH` com caminhos do Windows.
+- `scripts/start-local.ps1` inicia o bot, reinicia se cair e atualiza o yt-dlp a cada 24 h.
+- Tarefa agendada `AJEITA` (no login do Windows) executa esse script oculto.
+- Painel com status, pedidos e logs: `http://127.0.0.1:PORTA/logs`. O historico fica em `data/`.
+- Alertas do Windows e uma mensagem no seu proprio WhatsApp avisam quando ha desconexao ou 3 falhas seguidas.
+
 ## Seguranca
 
 - O painel esta em `127.0.0.1` e so abre no proprio notebook.

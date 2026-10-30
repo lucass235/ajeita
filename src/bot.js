@@ -1,7 +1,8 @@
 'use strict';
 
 require('dotenv').config();
-const { installLogBuffer, getLogs } = require('./log-buffer');
+const { installLogBuffer, getLogs, loadRequests, saveRequests } = require('./log-buffer');
+const { notify } = require('./notify');
 installLogBuffer();
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const { ReliableRemoteAuth } = require('./remote-auth');
@@ -85,14 +86,23 @@ function installWhatsAppWebCompatibilityShim() {
 }
 
 const session = { phase: 'starting', qr: null };
-const recentRequests = [];
-let requestSeq = 0;
+const recentRequests = loadRequests();
+for (const r of recentRequests) {
+  if (r.status === 'na fila' || r.status === 'processando') {
+    r.status = 'erro';
+    r.detail = 'Interrompido por reinicio do bot';
+  }
+}
+let requestSeq = recentRequests.reduce((max, r) => Math.max(max, r.id || 0), 0);
+const persistRequests = () => saveRequests(recentRequests);
 function addRequest(info) {
   const request = { id: ++requestSeq, time: new Date().toISOString(), ...info };
   recentRequests.unshift(request);
   if (recentRequests.length > 50) recentRequests.pop();
+  persistRequests();
   return request;
 }
+let consecutiveFailures = 0;
 async function describeSender(message) {
   if (message.fromMe) return { name: 'Eu (conta do bot)', number: '' };
   try {
@@ -183,6 +193,7 @@ client.on('ready', () => {
       onUnhealthy:()=>{
         session.phase='browser_error';
         console.error('Reiniciando AJEITA para recuperar o navegador do WhatsApp.');
+        notify('AJEITA reiniciando', 'O navegador do WhatsApp travou e foi reiniciado.', 'browser');
         setTimeout(()=>process.exit(1),500);
       }
     });
@@ -193,11 +204,13 @@ client.on('auth_failure', reason => {
   session.phase = 'auth_failure';
   session.qr = null;
   console.error('Falha de autenticacao:', reason);
+  notify('AJEITA precisa de atencao', 'Falha de login no WhatsApp. Pareie de novo pelo painel.', 'auth');
 });
 client.on('disconnected', reason => {
   session.phase = 'disconnected';
   session.qr = null;
   console.warn('WhatsApp desconectado:', reason);
+  notify('AJEITA desconectado', 'O WhatsApp desconectou (' + reason + '). O bot vai reiniciar.', 'disconnected');
   setTimeout(() => process.exit(1), 1000);
 });
 
@@ -259,6 +272,7 @@ async function processJob(job) {
   const startedAt = Date.now();
   const host = new URL(job.link).hostname;
   job.request.status = 'processando';
+  persistRequests();
   console.log('Processando pedido de ' + job.request.who + ' | ' + host + ' | ' + job.link);
   try {
     if (settings.requestDelaySeconds > 0) {
@@ -282,13 +296,21 @@ async function processJob(job) {
       if (!sent?.id) throw new Error('WhatsApp nao confirmou a criacao da mensagem.');
       console.log('Video enviado: ' + Math.round(part.bytes / 1024) + ' KB');
     }
+    consecutiveFailures = 0;
     job.request.status = 'concluido';
     job.request.seconds = Math.round((Date.now() - startedAt) / 100) / 10;
+    persistRequests();
     console.log('Pedido de ' + job.request.who + ' concluido em ' + job.request.seconds + 's | ' + host);
   } catch (error) {
     job.request.status = 'erro';
     job.request.seconds = Math.round((Date.now() - startedAt) / 100) / 10;
     job.request.detail = 'Falha em ' + stage + ': ' + String(error?.message || error).split('\n')[0].slice(0, 200);
+    persistRequests();
+    if (++consecutiveFailures === 3) {
+      notify('AJEITA com problemas', '3 pedidos seguidos falharam. Veja o painel de logs.', 'falhas');
+      const selfId = client.info?.wid?._serialized;
+      if (selfId) await safeText(selfId, 'AJEITA: 3 pedidos seguidos falharam. Pode ser o yt-dlp desatualizado ou bloqueio da plataforma. Veja o painel de logs.');
+    }
     console.error('Falha em ' + stage + ' apos ' + ((Date.now() - startedAt) / 1000).toFixed(1) + 's | ' + job.link + ':', error);
     await sendErrorFeedback(job.chatId);
   } finally {
@@ -408,6 +430,7 @@ console.log('Iniciando AJEITA...');
 prepareRuntimeAuth().then(() => client.initialize()).catch(err => {
   session.phase = 'startup_error';
   console.error('Nao consegui iniciar WhatsApp Web:', err);
+  notify('AJEITA nao iniciou', 'Nao consegui abrir o WhatsApp Web. Veja o painel de logs.', 'startup');
   setTimeout(() => process.exit(1), 1000).unref();
 });
 

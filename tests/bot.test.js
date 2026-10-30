@@ -23,7 +23,8 @@ function boot(env = {}, parts = [{filepath:"fixture.mp4",bytes:10}]) {
     'qrcode-terminal': {},
     './link': require('../src/link'),
     './status': {},
-    './log-buffer': {installLogBuffer(){},getLogs:()=>[]},
+    './log-buffer': {installLogBuffer(){},getLogs:()=>[],loadRequests:()=>[],saveRequests(){}},
+    './notify': {notify(){}},
     './runtime-auth': {prepareRuntimeAuth:async()=>{}},
     './browser-health': {},
     './downloader': {getFriendlyError:()=> 'Falha', downloadVideo:async link=>{

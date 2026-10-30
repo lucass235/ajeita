@@ -12,7 +12,7 @@
     "postinstall": "node scripts/patch-whatsapp-web.js",
     "start": "node src/bot.js",
     "test": "node --test tests/*.test.js",
-    "check": "node --check src/bot.js && node --check src/downloader.js && node --check src/link.js && node --check src/status.js && node --check src/gcs-store.js && node --check src/remote-auth.js && node --check src/runtime-auth.js && node --check src/browser-health.js && node --check src/log-buffer.js && node --check src/dashboard.js"
+    "check": "node --check src/bot.js && node --check src/downloader.js && node --check src/link.js && node --check src/status.js && node --check src/gcs-store.js && node --check src/remote-auth.js && node --check src/runtime-auth.js && node --check src/browser-health.js && node --check src/log-buffer.js && node --check src/dashboard.js && node --check src/notify.js"
   },
   "dependencies": {
     "dotenv": "^16.6.1",
