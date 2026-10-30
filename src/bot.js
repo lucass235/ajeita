@@ -1,6 +1,8 @@
 'use strict';
 
 require('dotenv').config();
+const { installLogBuffer, getLogs } = require('./log-buffer');
+installLogBuffer();
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const { ReliableRemoteAuth } = require('./remote-auth');
 const { GcsSessionStore } = require('./gcs-store');
@@ -83,6 +85,23 @@ function installWhatsAppWebCompatibilityShim() {
 }
 
 const session = { phase: 'starting', qr: null };
+const recentRequests = [];
+let requestSeq = 0;
+function addRequest(info) {
+  const request = { id: ++requestSeq, time: new Date().toISOString(), ...info };
+  recentRequests.unshift(request);
+  if (recentRequests.length > 50) recentRequests.pop();
+  return request;
+}
+async function describeSender(message) {
+  if (message.fromMe) return { name: 'Eu (conta do bot)', number: '' };
+  try {
+    const contact = await withTimeout(message.getContact(), 3000, 'contato indisponivel');
+    return { name: contact.name || contact.pushname || message._data?.notifyName || '', number: contact.number || '' };
+  } catch {
+    return { name: message._data?.notifyName || '', number: String(message.author || message.from || '').split('@')[0] };
+  }
+}
 async function getDiagnostics() {
   const result = {
     phase:session.phase,
@@ -91,7 +110,12 @@ async function getDiagnostics() {
     receivedMessages:session.receivedMessages || 0,
     receivedCommands:session.receivedCommands || 0,
     lastMessageAt:session.lastMessageAt || null,
-    working, queued:queue.length
+    working, queued:queue.length,
+    requests: recentRequests,
+    settings: {
+      allowGroups: settings.allowGroups, allowOtherPeople: settings.allowOtherPeople,
+      cooldownSeconds: settings.chatCooldownSeconds, maxQueue: settings.maxQueue, maxFileMB: settings.maxFileMB
+    }
   };
   if (!result.browserConnected || result.pageClosed) return result;
   let timeout;
@@ -119,7 +143,8 @@ const httpServer = port > 0 ? createStatusServer({
   port,
   adminToken: process.env.ADMIN_TOKEN || '',
   getStatus: () => session,
-  getDiagnostics
+  getDiagnostics,
+  getLogs
 }) : null;
 
 client.on('qr', qr => {
@@ -231,6 +256,10 @@ async function getChatWhenAvailable(message, attempts = 3) {
 async function processJob(job) {
   let result;
   let stage = 'download/conversao';
+  const startedAt = Date.now();
+  const host = new URL(job.link).hostname;
+  job.request.status = 'processando';
+  console.log('Processando pedido de ' + job.request.who + ' | ' + host + ' | ' + job.link);
   try {
     if (settings.requestDelaySeconds > 0) {
       await new Promise(resolve => setTimeout(resolve, settings.requestDelaySeconds * 1000));
@@ -238,7 +267,8 @@ async function processJob(job) {
     if (shuttingDown) return;
     if (settings.sendProgress) await safeText(job.chatId, 'perai');
     result = await downloadVideo(job.link, settings);
-    console.log('Video preparado para WhatsApp: ' + Math.round(result.bytes / 1024) + ' KB');
+    console.log('Video preparado para WhatsApp: ' + Math.round(result.bytes / 1024) + ' KB | ' +
+      result.parts.length + ' parte(s) | download+conversao em ' + ((Date.now() - startedAt) / 1000).toFixed(1) + 's');
     stage = 'envio ao WhatsApp';
     for (const [index, part] of result.parts.entries()) {
       if (shuttingDown) break;
@@ -252,8 +282,14 @@ async function processJob(job) {
       if (!sent?.id) throw new Error('WhatsApp nao confirmou a criacao da mensagem.');
       console.log('Video enviado: ' + Math.round(part.bytes / 1024) + ' KB');
     }
+    job.request.status = 'concluido';
+    job.request.seconds = Math.round((Date.now() - startedAt) / 100) / 10;
+    console.log('Pedido de ' + job.request.who + ' concluido em ' + job.request.seconds + 's | ' + host);
   } catch (error) {
-    console.error('Falha em ' + stage + ':', error);
+    job.request.status = 'erro';
+    job.request.seconds = Math.round((Date.now() - startedAt) / 100) / 10;
+    job.request.detail = 'Falha em ' + stage + ': ' + String(error?.message || error).split('\n')[0].slice(0, 200);
+    console.error('Falha em ' + stage + ' apos ' + ((Date.now() - startedAt) / 1000).toFixed(1) + 's | ' + job.link + ':', error);
     await sendErrorFeedback(job.chatId);
   } finally {
     if (result) await result.cleanup().catch(err => console.warn('Limpeza falhou:', err.message));
@@ -282,24 +318,36 @@ client.on('message_create', async message => {
   }
   if (!isAjeita(message.body)) return;
   session.receivedCommands = (session.receivedCommands || 0) + 1;
-  console.log('Comando detectado | identificador de conversa: ' + Boolean(eventChatId));
   const messageId = message.id?._serialized;
   if (messageId && seenIds.has(messageId)) return;
   if (messageId) {
     seenIds.add(messageId);
     if (seenIds.size > 1000) seenIds.delete(seenIds.values().next().value);
   }
+  const sender = await describeSender(message);
+  const who = (sender.name || 'Sem nome') + (sender.number ? ' (+' + sender.number + ')' : '');
+  const typed = String(message.body || '').trim().slice(0, 300);
+  const chatKind = /@g\.us$/i.test(eventChatId || '') ? 'grupo' : 'individual';
+  console.log('Comando de ' + who + ' [' + chatKind + ']: "' + typed + '"');
+  const requestInfo = { who, name: sender.name, number: sender.number, typed, chatKind, fromMe: Boolean(message.fromMe) };
+  const ignore = reason => {
+    console.log('Comando de ' + who + ' ignorado: ' + reason);
+    addRequest({ ...requestInfo, status: 'ignorado', detail: reason });
+  };
   try {
     // O evento já traz o identificador do chat e não depende do cache interno
     // do WhatsApp Web, que pode estar indisponível numa mensagem recém-chegada.
     const chatId = eventChatId;
-    if (!chatId || /@(broadcast|newsletter)\b/.test(chatId)) return;
-    if (!settings.allowGroups && /@g\.us$/i.test(chatId)) return;
-    if (!settings.allowOtherPeople && !message.fromMe) return;
+    if (!chatId || /@(broadcast|newsletter)\b/.test(chatId)) { ignore('chat de transmissao/canal'); return; }
+    if (!settings.allowGroups && chatKind === 'grupo') { ignore('grupos desativados (ALLOW_GROUPS=false)'); return; }
+    if (!settings.allowOtherPeople && !message.fromMe) { ignore('pedido de outra pessoa desativado (ALLOW_OTHER_PEOPLE=false)'); return; }
     const last = lastChatRequest.get(chatId) || 0;
-    if (Date.now() - last < settings.chatCooldownSeconds * 1000) return;
+    if (Date.now() - last < settings.chatCooldownSeconds * 1000) {
+      ignore('cooldown de ' + settings.chatCooldownSeconds + 's nesse chat');
+      return;
+    }
     if (queue.length + resolving + Number(working) >= settings.maxQueue) {
-      console.warn('Pedido ignorado: fila cheia.');
+      ignore('fila cheia');
       await sendErrorFeedback(chatId);
       return;
     }
@@ -326,13 +374,14 @@ client.on('message_create', async message => {
     } finally { resolving--; }
     if (shuttingDown) return;
     if (!link) {
-      console.warn('Pedido ignorado: nenhum link recente encontrado.');
+      ignore('nenhum link recente encontrado');
       await sendErrorFeedback(chatId);
       return;
     }
     lastChatRequest.set(chatId, Date.now());
-    queue.push({ chatId, link });
-    console.log('Pedido recebido | fila: ' + queue.length + ' | ' + new URL(link).hostname);
+    const request = addRequest({ ...requestInfo, status: 'na fila', link, host: new URL(link).hostname });
+    queue.push({ chatId, link, request });
+    console.log('Pedido de ' + who + ' na fila | posicao ' + queue.length + ' | ' + request.host);
     void drainQueue();
   } catch (error) {
     console.error('Falha interpretando comando:', error);

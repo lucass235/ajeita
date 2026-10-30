@@ -2,6 +2,7 @@
 
 const http = require('node:http');
 const { timingSafeEqual } = require('node:crypto');
+const { DASHBOARD_PAGE } = require('./dashboard');
 
 function authorized(header, token) {
   if (!token || !header?.startsWith('Basic ')) return false;
@@ -13,13 +14,13 @@ function authorized(header, token) {
   return expected.length === provided.length && timingSafeEqual(expected, provided);
 }
 
-function createStatusServer({ port, adminToken, getStatus, getDiagnostics }) {
+function createStatusServer({ port, adminToken, getStatus, getDiagnostics, getLogs }) {
   const server = http.createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store, max-age=0');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     const route = (req.url || '').split('?')[0];
-    if (req.method !== 'GET' || !['/', '/healthz', '/pair', '/diagnostics'].includes(route)) {
+    if (req.method !== 'GET' || !['/', '/healthz', '/pair', '/diagnostics', '/logs', '/logs.json'].includes(route)) {
       res.writeHead(404).end('Not found'); return;
     }
     if (route === '/healthz' || route === '/') {
@@ -43,6 +44,31 @@ function createStatusServer({ port, adminToken, getStatus, getDiagnostics }) {
       } catch {
         res.end(JSON.stringify({error:'Diagnostico indisponivel'}));
       }
+      return;
+    }
+    if (route === '/logs' || route === '/logs.json') {
+      if (!getLogs) {res.writeHead(404).end('Not found');return;}
+      if (route === '/logs') {
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Content-Security-Policy': "default-src 'none'; connect-src 'self'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline';",
+          'X-Frame-Options': 'DENY'
+        });
+        res.end(DASHBOARD_PAGE); return;
+      }
+      const params = new URL(req.url, 'http://x').searchParams;
+      let status = {};
+      try { status = getDiagnostics ? await getDiagnostics() : {}; } catch {}
+      status.uptimeSeconds = Math.round(process.uptime());
+      const current = getStatus();
+      if (current.qr) {
+        try { status.qrImage = await require('qrcode').toDataURL(current.qr, { width: 320, margin: 2 }); } catch {}
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({
+        status,
+        entries: getLogs({ after: Number(params.get('after')) || 0, level: params.get('level') || 'info' })
+      }));
       return;
     }
     const { phase, qr, backupSavedAt, backupError } = getStatus();
