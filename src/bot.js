@@ -29,7 +29,7 @@ const settings = {
   sendProgress: boolSetting('SEND_PROGRESS', true),
   requestDelaySeconds: numSetting('REQUEST_DELAY_SECONDS', 10, 0, 300),
   chromeNoSandbox: boolSetting('CHROME_NO_SANDBOX', false),
-  maxFileMB: numSetting('MAX_FILE_MB', 45, 1, 100),
+  maxFileMB: numSetting('MAX_FILE_MB', 100, 1, 100),
   maxDurationSeconds: numSetting('MAX_DURATION_SECONDS', 1200, 30, 7200),
   timeoutSeconds: numSetting('DOWNLOAD_TIMEOUT_SECONDS', 180, 30, 900),
   maxQueue: numSetting('MAX_QUEUE', 5, 1, 30),
@@ -248,9 +248,9 @@ async function withTimeout(promise, milliseconds, message) {
   } finally {clearTimeout(timeout);}
 }
 
-async function sendErrorFeedback(chatId) {
+async function sendErrorFeedback(chatId, text = ERROR_FEEDBACK) {
   await new Promise(resolve => setTimeout(resolve, 5000));
-  if (!shuttingDown) await safeText(chatId, ERROR_FEEDBACK);
+  if (!shuttingDown) await safeText(chatId, text);
 }
 
 async function getChatWhenAvailable(message, attempts = 3) {
@@ -306,13 +306,17 @@ async function processJob(job) {
     job.request.seconds = Math.round((Date.now() - startedAt) / 100) / 10;
     job.request.detail = 'Falha em ' + stage + ': ' + String(error?.message || error).split('\n')[0].slice(0, 200);
     persistRequests();
-    if (++consecutiveFailures === 3) {
+    const tooLong = error?.code === 'TOO_LONG' || /limite de duracao/i.test(String(error?.message));
+    const tooBig = error?.code === 'TOO_LARGE' || tooLong;
+    if (!tooBig && ++consecutiveFailures === 3) {
       notify('AJEITA com problemas', '3 pedidos seguidos falharam. Veja o painel de logs.', 'falhas');
       const selfId = client.info?.wid?._serialized;
       if (selfId) await safeText(selfId, 'AJEITA: 3 pedidos seguidos falharam. Pode ser o yt-dlp desatualizado ou bloqueio da plataforma. Veja o painel de logs.');
     }
     console.error('Falha em ' + stage + ' apos ' + ((Date.now() - startedAt) / 1000).toFixed(1) + 's | ' + job.link + ':', error);
-    await sendErrorFeedback(job.chatId);
+    await sendErrorFeedback(job.chatId, error?.code === 'TOO_LARGE' ? 'eita esse video e grande demais pra eu mandar por aqui (limite de ' + settings.maxFileMB + ' MB)'
+      : tooLong ?'eita esse video e longo demais pra eu mandar por aqui'
+      : ERROR_FEEDBACK);
   } finally {
     if (result) await result.cleanup().catch(err => console.warn('Limpeza falhou:', err.message));
   }

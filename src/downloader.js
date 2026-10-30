@@ -68,7 +68,7 @@ function getFriendlyError(error) {
   return 'Nao consegui baixar ou enviar esse video. Tente um video publico menor.';
 }
 
-async function prepareWhatsAppVideo(filepath, { timeoutMs = 180000, maxDurationSeconds = 1200, maxFileMB = 45, startSeconds, clipSeconds, outputPath } = {}) {
+async function prepareWhatsAppVideo(filepath, { timeoutMs = 180000, maxDurationSeconds = 1200, maxFileMB = 100, startSeconds, clipSeconds, outputPath } = {}) {
   const probe = JSON.parse(await runProcess('ffprobe', [
     '-v', 'error', '-show_entries',
     'stream=codec_name,codec_type,profile,pix_fmt,width,height:format=duration,size', '-of', 'json', filepath
@@ -129,7 +129,7 @@ async function prepareWhatsAppParts(filepath, options = {}) {
     });
     const stats = await fs.stat(output);
     if (stats.size === 0) throw new Error('Video gerado vazio.');
-    if (stats.size > (options.maxFileMB ?? 45) * 1024 * 1024) throw new Error('O arquivo e maior que o limite configurado.');
+    if (stats.size > (options.maxFileMB ?? 100) * 1024 * 1024) throw new Error('O arquivo e maior que o limite configurado.');
     parts.push({ filepath: output, bytes: stats.size });
   }
   return parts;
@@ -138,7 +138,7 @@ async function prepareWhatsAppParts(filepath, options = {}) {
 async function downloadVideo(link, options = {}) {
   const url = normalizeLink(link);
   if (!url) throw new Error('Link invalido: somente Facebook, TikTok e Instagram.');
-  const maxFileMB = Math.max(1, Math.min(100, Number(options.maxFileMB) || 45));
+  const maxFileMB = Math.max(1, Math.min(100, Number(options.maxFileMB) || 100));
   const maxDurationSeconds = Math.max(30, Number(options.maxDurationSeconds) || 1200);
   const timeoutSeconds = Math.max(30, Number(options.timeoutSeconds) || 180);
   const pythonBin = options.pythonBin || (process.platform === 'win32' ? 'python' : 'python3');
@@ -177,10 +177,20 @@ async function downloadVideo(link, options = {}) {
       '-o', path.join(tempDir, 'video.%(ext)s'),
       url
     ];
-    await runProcess(pythonBin, args, { timeoutMs: timeoutSeconds * 1000 });
+    const output = await runProcess(pythonBin, args, { timeoutMs: timeoutSeconds * 1000 });
     const files = await fs.readdir(tempDir);
     const filename = files.find(file => /^video.*\.mp4$/i.test(file));
-    if (!filename) throw new Error('Video MP4 nao foi gerado. Confira FFmpeg.');
+    if (!filename) {
+      // O yt-dlp sai com sucesso, sem arquivo, quando o video passa de --max-filesize
+      // ou nao atende ao filtro de duracao.
+      if (/does not pass filter|duration/i.test(output)) {
+        throw Object.assign(new Error('Video acima do limite de duracao (' + Math.round(maxDurationSeconds / 60) + ' min).'), { code: 'TOO_LONG' });
+      }
+      if (/larger than|max-filesize/i.test(output) || !output.trim()) {
+        throw Object.assign(new Error('Video acima do limite de ' + maxFileMB + ' MB (yt-dlp interrompeu o download).'), { code: 'TOO_LARGE' });
+      }
+      throw new Error('O yt-dlp nao gerou o video. Ultima saida: ' + output.trim().split('\n').slice(-3).join(' ').slice(0, 300));
+    }
     const parts = await prepareWhatsAppParts(path.join(tempDir, filename), {
       timeoutMs: timeoutSeconds * 1000,
       maxDurationSeconds,
