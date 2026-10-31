@@ -1,5 +1,22 @@
 'use strict';
 
+async function isWhatsAppWebReady(client, timeoutMs=5000) {
+  let timeout;
+  try {
+    if (!client.pupBrowser?.isConnected() || !client.pupPage || client.pupPage.isClosed()) return false;
+    return await Promise.race([
+      client.pupPage.evaluate(() => window.AuthStore?.AppState?.state === 'CONNECTED'
+        && Boolean(window.AuthStore?.AppState?.hasSynced)
+        && typeof window.onAddMessageEvent === 'function'),
+      new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('browser timeout')),timeoutMs);})
+    ]);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function createBrowserHealthMonitor({client,isEnabled,onUnhealthy,intervalMs=10000,timeoutMs=5000,maxFailures=3,logger=console}) {
   let failures=0, busy=false, stopped=false;
   async function check() {
@@ -10,10 +27,7 @@ function createBrowserHealthMonitor({client,isEnabled,onUnhealthy,intervalMs=100
       if (!client.pupBrowser?.isConnected() || !client.pupPage || client.pupPage.isClosed()) {
         throw new Error('browser closed');
       }
-      const responsive = await Promise.race([
-        client.pupPage.evaluate(() => Boolean(window.WWebJS) && window.AuthStore?.AppState?.state === 'CONNECTED'),
-        new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('browser timeout')),timeoutMs);})
-      ]);
+      const responsive = await isWhatsAppWebReady(client,timeoutMs);
       if (!responsive) throw new Error('browser disconnected');
       failures=0;
     } catch {
@@ -34,4 +48,4 @@ function createBrowserHealthMonitor({client,isEnabled,onUnhealthy,intervalMs=100
   return {check,stop};
 }
 
-module.exports={createBrowserHealthMonitor};
+module.exports={createBrowserHealthMonitor,isWhatsAppWebReady};

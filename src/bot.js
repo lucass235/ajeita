@@ -12,7 +12,7 @@ const { isAjeita, extractVideoLink, findLinkForCommand } = require('./link');
 const { downloadVideo } = require('./downloader');
 const { createStatusServer } = require('./status');
 const { prepareRuntimeAuth } = require('./runtime-auth');
-const { createBrowserHealthMonitor } = require('./browser-health');
+const { createBrowserHealthMonitor, isWhatsAppWebReady } = require('./browser-health');
 const ERROR_FEEDBACK = 'eita deu alguma bronca aqui nesse video, nao conseguir baixar';
 
 function boolSetting(name, fallback) {
@@ -180,9 +180,16 @@ client.on('authenticated', () => {
   session.phase = 'authenticated';
   session.qr = null;
   console.log('Sessao autenticada.');
+  scheduleReadyFallback();
 });
 let browserMonitor;
-client.on('ready', () => {
+let readyFallbackTimer;
+function markReady(source) {
+  if (session.phase === 'ready') return;
+  if (readyFallbackTimer) {
+    clearInterval(readyFallbackTimer);
+    readyFallbackTimer = null;
+  }
   session.phase = 'ready';
   session.qr = null;
   installWhatsAppWebCompatibilityShim();
@@ -198,15 +205,35 @@ client.on('ready', () => {
       }
     });
   }
-  console.log('AJEITA pronto! Envie link e escreva "ajeita" no mesmo chat.');
+  console.log('AJEITA pronto' + (source ? ' (' + source + ')' : '') + '! Envie link e escreva "ajeita" no mesmo chat.');
+}
+function scheduleReadyFallback() {
+  if (readyFallbackTimer) clearInterval(readyFallbackTimer);
+  let attempts = 0;
+  readyFallbackTimer = setInterval(async () => {
+    if (session.phase !== 'authenticated' || ++attempts > 60) {
+      clearInterval(readyFallbackTimer);
+      readyFallbackTimer = null;
+      return;
+    }
+    if (await isWhatsAppWebReady(client)) markReady('conexao verificada');
+  }, 2000);
+  readyFallbackTimer.unref();
+}
+client.on('ready', () => {
+  markReady('evento ready');
 });
 client.on('auth_failure', reason => {
+  if (readyFallbackTimer) clearInterval(readyFallbackTimer);
+  readyFallbackTimer = null;
   session.phase = 'auth_failure';
   session.qr = null;
   console.error('Falha de autenticacao:', reason);
   notify('AJEITA precisa de atencao', 'Falha de login no WhatsApp. Pareie de novo pelo painel.', 'auth');
 });
 client.on('disconnected', reason => {
+  if (readyFallbackTimer) clearInterval(readyFallbackTimer);
+  readyFallbackTimer = null;
   session.phase = 'disconnected';
   session.qr = null;
   console.warn('WhatsApp desconectado:', reason);
@@ -420,6 +447,7 @@ async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   browserMonitor?.stop();
+  if (readyFallbackTimer) clearInterval(readyFallbackTimer);
   queue.length = 0;
   console.log('Encerrando AJEITA: ' + signal);
   const deadline = setTimeout(() => process.exit(0), 9000);

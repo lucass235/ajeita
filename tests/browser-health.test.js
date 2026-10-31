@@ -1,7 +1,14 @@
 'use strict';
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const {createBrowserHealthMonitor}=require('../src/browser-health');
+const {createBrowserHealthMonitor,isWhatsAppWebReady}=require('../src/browser-health');
+
+test('considera pronto quando o WhatsApp conectou, sincronizou e instalou a ponte',async()=>{
+  const client={pupBrowser:{isConnected:()=>true},pupPage:{isClosed:()=>false,evaluate:async()=>true}};
+  assert.equal(await isWhatsAppWebReady(client),true);
+  client.pupPage.evaluate=async()=>false;
+  assert.equal(await isWhatsAppWebReady(client),false);
+});
 
 test('recupera navegador travado mesmo quando a conexao Puppeteer continua aberta',async()=>{
   let restarts=0;
