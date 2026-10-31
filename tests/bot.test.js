@@ -91,3 +91,15 @@ test('envia partes numeradas e pausa depois do aviso e de cada video',async()=>{
   assert.deepEqual(bot.sent.slice(1).map(x=>x.options.caption),['Parte 1 \u{1F446}','Parte 2 \u{1F446}','Parte 3 \u{1F446}']);
   assert.equal(bot.pauses.length,4);
 });
+
+test('um comando baixa lote de links e responde cada mensagem de origem',async()=>{
+  const bot=boot({SEND_PROGRESS:'true',CHAT_COOLDOWN_SECONDS:'0'});
+  const chatId='lote@c.us';
+  await bot.handle({...message(chatId,false,'link-1'),body:'https://fb.watch/primeiro'});
+  await bot.handle({...message(chatId,false,'link-2'),body:'https://vm.tiktok.com/segundo'});
+  await bot.handle(message(chatId,false,'cmd'));
+  for(let i=0;i<8;i++) await settle();
+  assert.deepEqual(bot.downloads,['https://fb.watch/primeiro','https://vm.tiktok.com/segundo']);
+  assert.deepEqual(bot.sent.filter(x=>typeof x.body==='string').map(x=>x.body),['perai']);
+  assert.deepEqual(bot.sent.filter(x=>typeof x.body!=='string').map(x=>x.options.quotedMessageId),['link-1','link-2']);
+});

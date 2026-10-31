@@ -73,6 +73,7 @@ MAX_FILE_MB=100
 MAX_DURATION_SECONDS=1200
 DOWNLOAD_TIMEOUT_SECONDS=180
 MAX_QUEUE=5
+MAX_LINKS_PER_REQUEST=5
 CHAT_COOLDOWN_SECONDS=30
 MAX_LINK_AGE_HOURS=72
 ADMIN_TOKEN=troque-por-uma-senha-secreta-com-32-caracteres
@@ -121,6 +122,10 @@ Resultado esperado:
 2. Envie `ajeita` na mesma conversa. Frases como `ajeita por favor`,
    `pode ajeitar?`, `ajeita ai` e o erro comum `ageita` tambem funcionam.
 3. O bot deve responder `perai` e depois enviar o video.
+
+Tambem e possivel enviar varios links consecutivos e escrever `ajeita` uma vez. O
+bot responde `perai`, processa os links em ordem e envia cada video como resposta
+ao link correspondente. O limite padrao e cinco links por comando.
 
 Grupos permanecem desativados enquanto `ALLOW_GROUPS=false`.
 

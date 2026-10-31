@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isAjeita, normalizeLink, findLinkForCommand } = require('../src/link');
+const { isAjeita, normalizeLink, getSerializedMessageId, findLinkForCommand, findLinksForCommand } = require('../src/link');
 const { authorized } = require('../src/status');
 const { downloadVideo, getFriendlyError } = require('../src/downloader');
 const { runProcess } = require('../src/downloader');
@@ -35,6 +35,24 @@ test('acha link da conversa anterior ao comando', async () => {
     {id:{_serialized:'4'},body:'https://fb.watch/4',timestamp:ts+1}
   ];
   assert.equal(await findLinkForCommand(msgs[2],{fetchMessages:async()=>msgs},{now}),'https://vm.tiktok.com/2');
+});
+test('acha lote de links consecutivos e preserva mensagem de origem', async () => {
+  const now = Date.now(), ts = Math.floor(now / 1000);
+  const command = {id:{_serialized:'cmd'},body:'ajeita',timestamp:ts};
+  const messages = [
+    {id:{_serialized:'texto'},body:'videos:',timestamp:ts-3},
+    {id:{_serialized:'link-1'},body:'https://fb.watch/primeiro',timestamp:ts-2},
+    {id:{_serialized:'link-2'},body:'https://vm.tiktok.com/segundo',timestamp:ts-1},
+    command
+  ];
+  assert.deepEqual(await findLinksForCommand(command,{fetchMessages:async()=>messages},{now}),[
+    {link:'https://fb.watch/primeiro',messageId:'link-1'},
+    {link:'https://vm.tiktok.com/segundo',messageId:'link-2'}
+  ]);
+});
+test('le id novo do WhatsApp Web para responder ao link', () => {
+  assert.equal(getSerializedMessageId({id:{$1:'true_chat_ABC'}}),'true_chat_ABC');
+  assert.equal(getSerializedMessageId({id:{_serialized:'false_chat_XYZ'}}),'false_chat_XYZ');
 });
 test('basic auth do painel', () => {
   const h='Basic '+Buffer.from('admin:abc123').toString('base64');

@@ -8,7 +8,7 @@ const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const { ReliableRemoteAuth } = require('./remote-auth');
 const { GcsSessionStore } = require('./gcs-store');
 const qrcode = require('qrcode-terminal');
-const { isAjeita, extractVideoLink, findLinkForCommand } = require('./link');
+const { isAjeita, extractVideoLinks, getSerializedMessageId, findLinksForCommand } = require('./link');
 const { downloadVideo } = require('./downloader');
 const { createStatusServer } = require('./status');
 const { prepareRuntimeAuth } = require('./runtime-auth');
@@ -33,6 +33,7 @@ const settings = {
   maxDurationSeconds: numSetting('MAX_DURATION_SECONDS', 1200, 30, 7200),
   timeoutSeconds: numSetting('DOWNLOAD_TIMEOUT_SECONDS', 180, 30, 900),
   maxQueue: numSetting('MAX_QUEUE', 5, 1, 30),
+  maxLinksPerRequest: numSetting('MAX_LINKS_PER_REQUEST', 5, 1, 10),
   chatCooldownSeconds: numSetting('CHAT_COOLDOWN_SECONDS', 30, 0, 3600),
   maxLinkAgeHours: numSetting('MAX_LINK_AGE_HOURS', 72, 1, 24 * 30),
   pythonBin: process.env.PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3'),
@@ -184,6 +185,7 @@ client.on('authenticated', () => {
 });
 let browserMonitor;
 let readyFallbackTimer;
+let attachingFallbackEvents = false;
 function markReady(source) {
   if (session.phase === 'ready') return;
   if (readyFallbackTimer) {
@@ -207,6 +209,26 @@ function markReady(source) {
   }
   console.log('AJEITA pronto' + (source ? ' (' + source + ')' : '') + '! Envie link e escreva "ajeita" no mesmo chat.');
 }
+async function ensureFallbackMessageEvents() {
+  if (attachingFallbackEvents) return false;
+  attachingFallbackEvents = true;
+  try {
+    const alreadyAttached = await client.pupPage.evaluate(() => Boolean(window.__ajeitaMessageEventsAttached));
+    if (!alreadyAttached) {
+      // Quando o evento hasSynced ocorre antes de a biblioteca terminar a inicializacao,
+      // ela pode expor onAddMessageEvent sem registrar o listener Msg.on('add').
+      await withTimeout(client.attachEventListeners(), 30000, 'Instalacao dos eventos de mensagem sem resposta');
+      await client.pupPage.evaluate(() => { window.__ajeitaMessageEventsAttached = true; });
+      console.log('Ponte de mensagens reinstalada apos sincronizacao antecipada.');
+    }
+    return true;
+  } catch (error) {
+    console.warn('Ainda nao foi possivel instalar a ponte de mensagens:', error.message);
+    return false;
+  } finally {
+    attachingFallbackEvents = false;
+  }
+}
 function scheduleReadyFallback() {
   if (readyFallbackTimer) clearInterval(readyFallbackTimer);
   let attempts = 0;
@@ -216,7 +238,9 @@ function scheduleReadyFallback() {
       readyFallbackTimer = null;
       return;
     }
-    if (await isWhatsAppWebReady(client)) markReady('conexao verificada');
+    if (await isWhatsAppWebReady(client) && await ensureFallbackMessageEvents()) {
+      markReady('conexao e mensagens verificadas');
+    }
   }, 2000);
   readyFallbackTimer.unref();
 }
@@ -306,7 +330,7 @@ async function processJob(job) {
       await new Promise(resolve => setTimeout(resolve, settings.requestDelaySeconds * 1000));
     }
     if (shuttingDown) return;
-    if (settings.sendProgress) await safeText(job.chatId, 'perai');
+    if (settings.sendProgress && job.sendProgress !== false) await safeText(job.chatId, 'perai');
     result = await downloadVideo(job.link, settings);
     console.log('Video preparado para WhatsApp: ' + Math.round(result.bytes / 1024) + ' KB | ' +
       result.parts.length + ' parte(s) | download+conversao em ' + ((Date.now() - startedAt) / 1000).toFixed(1) + 's');
@@ -316,6 +340,7 @@ async function processJob(job) {
       const media = MessageMedia.fromFilePath(part.filepath);
       const sent = await pacedSend(job.chatId, media, {
         ...(result.parts.length > 1 ? { caption: `Parte ${index + 1} \u{1F446}` } : {}),
+        ...(job.quotedMessageId ? { quotedMessageId: job.quotedMessageId } : {}),
         sendMediaAsDocument: part.bytes > 14 * 1024 * 1024,
         sendSeen: false,
         waitUntilMsgSent: true
@@ -364,12 +389,22 @@ client.on('message_create', async message => {
   // Em contas multi-dispositivo, `from`/`to` pode ser um LID do contato;
   // `id.remote` é o identificador da conversa que o WhatsApp Web espera.
   const eventChatId = message.id?.remote || (message.fromMe ? message.to : message.from);
-  const eventLink = extractVideoLink(message.body || message.caption);
-  if (eventChatId && eventLink) {
-    lastVideoLinkByChat.set(eventChatId, { link: eventLink, receivedAt: Date.now() });
+  const commandDetected = isAjeita(message.body);
+  const eventLinks = extractVideoLinks(message.body || message.caption);
+  if (eventChatId && eventLinks.length) {
+    const recent = lastVideoLinkByChat.get(eventChatId) || [];
+    for (const link of eventLinks) {
+      if (!recent.some(item => item.link === link)) recent.push({
+        link, messageId: getSerializedMessageId(message), receivedAt: Date.now()
+      });
+    }
+    lastVideoLinkByChat.set(eventChatId, recent.slice(-settings.maxLinksPerRequest));
     if (lastVideoLinkByChat.size > 2000) lastVideoLinkByChat.delete(lastVideoLinkByChat.keys().next().value);
+  } else if (eventChatId && !commandDetected) {
+    // Uma mensagem comum interrompe a sequencia: somente links consecutivos formam lote.
+    lastVideoLinkByChat.delete(eventChatId);
   }
-  if (!isAjeita(message.body)) return;
+  if (!commandDetected) return;
   session.receivedCommands = (session.receivedCommands || 0) + 1;
   const messageId = message.id?._serialized;
   if (messageId && seenIds.has(messageId)) return;
@@ -408,33 +443,47 @@ client.on('message_create', async message => {
     lastChatRequest.set(chatId, Date.now());
     if (lastChatRequest.size > 2000) lastChatRequest.delete(lastChatRequest.keys().next().value);
     resolving++;
-    let link;
+    let items = [];
     try {
       // Uma resposta ao link ou "ajeita <link>" não precisa do histórico.
-      link = await findLinkForCommand(message, null, { maxAgeHours: settings.maxLinkAgeHours });
+      items = await findLinksForCommand(message, null, {
+        maxAgeHours: settings.maxLinkAgeHours, maxLinks: settings.maxLinksPerRequest
+      });
       const cached = lastVideoLinkByChat.get(chatId);
-      if (!link && cached && Date.now() - cached.receivedAt <= settings.maxLinkAgeHours * 3600 * 1000) {
-        link = cached.link;
+      if (!items.length && cached) {
+        items = cached.filter(item => Date.now() - item.receivedAt <= settings.maxLinkAgeHours * 3600 * 1000);
       }
-      if (!link) {
+      if (!items.length) {
         try {
           const chat = await getChatWhenAvailable(message);
-          link = await findLinkForCommand(message, chat, { maxAgeHours: settings.maxLinkAgeHours });
+          items = await findLinksForCommand(message, chat, {
+            maxAgeHours: settings.maxLinkAgeHours, maxLinks: settings.maxLinksPerRequest
+          });
         } catch (error) {
           console.warn('Historico do chat indisponivel; use "ajeita <link>" ou responda ao link:', error.message);
         }
       }
     } finally { resolving--; }
     if (shuttingDown) return;
-    if (!link) {
+    if (!items.length) {
       ignore('nenhum link recente encontrado');
       await sendErrorFeedback(chatId);
       return;
     }
+    const occupied = queue.length + Number(working);
+    if (occupied + items.length > settings.maxQueue) {
+      ignore('o lote de ' + items.length + ' links excede a capacidade disponivel da fila');
+      await sendErrorFeedback(chatId, 'eita tem link demais na fila agora, tenta de novo daqui a pouco');
+      return;
+    }
     lastChatRequest.set(chatId, Date.now());
-    const request = addRequest({ ...requestInfo, status: 'na fila', link, host: new URL(link).hostname });
-    queue.push({ chatId, link, request });
-    console.log('Pedido de ' + who + ' na fila | posicao ' + queue.length + ' | ' + request.host);
+    lastVideoLinkByChat.delete(chatId);
+    for (const [index, item] of items.entries()) {
+      const request = addRequest({ ...requestInfo, status: 'na fila', link: item.link, host: new URL(item.link).hostname,
+        batch: items.length, batchPosition: index + 1, repliesToLink: Boolean(item.messageId) });
+      queue.push({ chatId, link: item.link, quotedMessageId: item.messageId, request, sendProgress: index === 0 });
+    }
+    console.log('Pedido de ' + who + ' na fila | ' + items.length + ' link(s) | posicao ' + queue.length);
     void drainQueue();
   } catch (error) {
     console.error('Falha interpretando comando:', error);

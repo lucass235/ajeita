@@ -24,13 +24,29 @@ function normalizeLink(raw) {
 }
 
 function extractVideoLink(body) {
-  if (typeof body !== 'string') return null;
+  return extractVideoLinks(body)[0] || null;
+}
+
+function extractVideoLinks(body) {
+  if (typeof body !== 'string') return [];
   const matches = body.match(/https?:\/\/[^\s<>"'\x60]+/gi) || [];
+  const links = [];
   for (const match of matches) {
     const url = normalizeLink(match);
-    if (url) return url;
+    if (url && !links.includes(url)) links.push(url);
   }
-  return null;
+  return links;
+}
+
+function getSerializedMessageId(message) {
+  const id = message?.id || message?._data?.id;
+  if (!id) return null;
+  if (typeof id === 'string') return id;
+  if (typeof id._serialized === 'string' && id._serialized) return id._serialized;
+  // O WhatsApp Web atual renomeou internamente `_serialized` para `$1`.
+  if (typeof id.$1 === 'string' && id.$1) return id.$1;
+  const text = typeof id.toString === 'function' ? id.toString() : '';
+  return text && text !== '[object Object]' ? text : null;
 }
 
 function isAjeita(body) {
@@ -53,19 +69,24 @@ function isAjeita(body) {
 }
 
 async function findLinkForCommand(command, chat, { maxAgeHours = 72, now = Date.now() } = {}) {
+  const items = await findLinksForCommand(command, chat, { maxAgeHours, now });
+  return items.length ? items[items.length - 1].link : null;
+}
+
+async function findLinksForCommand(command, chat, { maxAgeHours = 72, now = Date.now(), maxLinks = 5 } = {}) {
   if (command.hasQuotedMsg && typeof command.getQuotedMessage === 'function') {
     try {
       const quoted = await command.getQuotedMessage();
-      const link = extractVideoLink(quoted?.body || quoted?.caption);
-      if (link) return link;
+      const links = extractVideoLinks(quoted?.body || quoted?.caption);
+      if (links.length) return links.slice(0, maxLinks).map(link => ({link, messageId: getSerializedMessageId(quoted)}));
     } catch (error) {
       console.warn('Nao foi possivel ler mensagem respondida:', error.message);
     }
   }
-  const directLink = extractVideoLink(command.body);
-  if (directLink) return directLink;
+  const directLinks = extractVideoLinks(command.body);
+  if (directLinks.length) return directLinks.slice(0, maxLinks).map(link => ({link, messageId: getSerializedMessageId(command)}));
 
-  if (!chat?.fetchMessages) return null;
+  if (!chat?.fetchMessages) return [];
 
   const messages = await chat.fetchMessages({ limit: 80 });
   const commandId = command.id?._serialized;
@@ -74,13 +95,23 @@ async function findLinkForCommand(command, chat, { maxAgeHours = 72, now = Date.
     ? messages.slice(0, index)
     : messages.filter(msg => Number(msg.timestamp) <= Number(command.timestamp));
   const cutoffSeconds = now / 1000 - maxAgeHours * 3600;
-  for (let i = before.length - 1; i >= 0; i--) {
+  const found = [];
+  for (let i = before.length - 1; i >= 0 && found.length < maxLinks; i--) {
     const msg = before[i];
-    if (Number(msg.timestamp) < cutoffSeconds) continue;
-    const link = extractVideoLink(msg.body || msg.caption);
-    if (link) return link;
+    if (Number(msg.timestamp) < cutoffSeconds) break;
+    const links = extractVideoLinks(msg.body || msg.caption);
+    // O lote e formado somente pelos links consecutivos logo antes do comando.
+    if (!links.length) break;
+    for (let j = links.length - 1; j >= 0 && found.length < maxLinks; j--) {
+      found.unshift({link: links[j], messageId: getSerializedMessageId(msg)});
+    }
   }
-  return null;
+  const unique = [];
+  const seen = new Set();
+  for (const item of found) {
+    if (!seen.has(item.link)) { seen.add(item.link); unique.push(item); }
+  }
+  return unique;
 }
 
-module.exports = { isAllowedHost, normalizeLink, extractVideoLink, isAjeita, findLinkForCommand };
+module.exports = { isAllowedHost, normalizeLink, extractVideoLink, extractVideoLinks, getSerializedMessageId, isAjeita, findLinkForCommand, findLinksForCommand };
