@@ -5,6 +5,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { spawn } = require('node:child_process');
 const { normalizeLink } = require('./link');
+const { downloadFacebookFallback } = require('./facebook-fallback');
 
 function runProcess(command, args, { timeoutMs = 180000 } = {}) {
   return new Promise((resolve, reject) => {
@@ -177,7 +178,20 @@ async function downloadVideo(link, options = {}) {
       '-o', path.join(tempDir, 'video.%(ext)s'),
       url
     ];
-    const output = await runProcess(pythonBin, args, { timeoutMs: timeoutSeconds * 1000 });
+    let output;
+    try {
+      output = await runProcess(pythonBin, args, { timeoutMs: timeoutSeconds * 1000 });
+    } catch (error) {
+      // Posts (nao reels) do Facebook: o extrator do yt-dlp costuma quebrar com "Cannot parse data".
+      if (!/(^|\.)facebook\.com$/i.test(new URL(url).hostname) || !/Cannot parse data/i.test(error.message)) throw error;
+      output = '';
+      await downloadFacebookFallback(url, tempDir, {
+        chromePath: process.env.CHROME_PATH,
+        runProcess,
+        timeoutMs: timeoutSeconds * 1000,
+        maxFileMB
+      });
+    }
     const files = await fs.readdir(tempDir);
     const filename = files.find(file => /^video.*\.mp4$/i.test(file));
     if (!filename) {
