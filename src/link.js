@@ -73,15 +73,38 @@ async function findLinkForCommand(command, chat, { maxAgeHours = 72, now = Date.
   return items.length ? items[items.length - 1].link : null;
 }
 
-async function findLinksForCommand(command, chat, { maxAgeHours = 72, now = Date.now(), maxLinks = 5 } = {}) {
-  if (command.hasQuotedMsg && typeof command.getQuotedMessage === 'function') {
+// getQuotedMessage() depende de modulos internos do WhatsApp Web que mudam sem aviso
+// (falha com erro "r"). Os dados da propria mensagem e o historico do chat nao dependem deles.
+async function readQuotedMessage(command, chat) {
+  if (typeof command.getQuotedMessage === 'function') {
     try {
       const quoted = await command.getQuotedMessage();
-      const links = extractVideoLinks(quoted?.body || quoted?.caption);
-      if (links.length) return links.slice(0, maxLinks).map(link => ({link, messageId: getSerializedMessageId(quoted)}));
+      if (quoted) return quoted;
     } catch (error) {
       console.warn('Nao foi possivel ler mensagem respondida:', error.message);
     }
+  }
+  const raw = command._data?.quotedMsg;
+  if (raw && (raw.body || raw.caption)) {
+    return { body: raw.body, caption: raw.caption, id: raw.id };
+  }
+  const stanzaId = command._data?.quotedStanzaID;
+  if (stanzaId && chat?.fetchMessages) {
+    try {
+      const messages = await chat.fetchMessages({ limit: 500 });
+      return messages.find(msg => msg.id?.id === stanzaId || msg.id?._serialized?.endsWith('_' + stanzaId));
+    } catch (error) {
+      console.warn('Nao foi possivel buscar a mensagem respondida no historico:', error.message);
+    }
+  }
+  return undefined;
+}
+
+async function findLinksForCommand(command, chat, { maxAgeHours = 72, now = Date.now(), maxLinks = 5 } = {}) {
+  if (command.hasQuotedMsg) {
+    const quoted = await readQuotedMessage(command, chat);
+    const links = extractVideoLinks(quoted?.body || quoted?.caption);
+    if (links.length) return links.slice(0, maxLinks).map(link => ({link, messageId: getSerializedMessageId(quoted)}));
   }
   const directLinks = extractVideoLinks(command.body);
   if (directLinks.length) return directLinks.slice(0, maxLinks).map(link => ({link, messageId: getSerializedMessageId(command)}));

@@ -98,3 +98,19 @@ test('painel exige autenticacao e nao vaza QR no healthcheck', async () => {
   } finally { server.closeAllConnections(); await new Promise(resolve=>server.close(resolve)); }
 });
 
+
+test('le o link da mensagem respondida mesmo quando getQuotedMessage falha', async () => {
+  const warn = console.warn; console.warn = () => {};
+  try {
+    const command = {
+      hasQuotedMsg: true,
+      getQuotedMessage: async () => { throw new Error('r'); },
+      _data: { quotedMsg: { body: 'olha https://www.tiktok.com/@a/video/123', id: { _serialized: 'false_1@c.us_ABC' } } },
+      body: 'ajeita'
+    };
+    assert.deepEqual(await findLinksForCommand(command, null), [{ link: 'https://www.tiktok.com/@a/video/123', messageId: 'false_1@c.us_ABC' }]);
+    const viaHistory = { hasQuotedMsg: true, getQuotedMessage: async () => { throw new Error('r'); }, _data: { quotedStanzaID: 'ABC' }, body: 'ajeita' };
+    const chat = { fetchMessages: async () => [{ id: { id: 'ABC', _serialized: 'false_1@c.us_ABC' }, body: 'https://vt.tiktok.com/ZSx/' }] };
+    assert.equal((await findLinksForCommand(viaHistory, chat))[0].link, 'https://vt.tiktok.com/ZSx/');
+  } finally { console.warn = warn; }
+});

@@ -208,7 +208,33 @@ Alternativa mais leve: o bot roda direto com Node, sem Docker Desktop.
   yt-dlp em `.venv` (`python -m venv .venv` e `.venv\Scripts\python -m pip install "yt-dlp[default]" curl_cffi`).
 - No `.env`: `PORT`, `HOST=127.0.0.1`, `PYTHON_BIN`, `CHROME_PATH` e `AUTH_DATA_PATH` com caminhos do Windows.
 - `scripts/start-local.ps1` inicia o bot, reinicia se cair e atualiza o yt-dlp a cada 24 h.
-- Tarefa agendada `AJEITA` (no login do Windows) executa esse script oculto.
+- Tarefa agendada `AJEITA` (no login do Windows) executa esse script oculto. Para criar, no PowerShell
+  (sem administrador; ajuste o caminho do projeto):
+
+  ```powershell
+  $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    -Argument '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "C:\Users\lsar\Documents\github\ajeita\scripts\start-local.ps1"' `
+    -WorkingDirectory 'C:\Users\lsar\Documents\github\ajeita'
+  $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+  $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+  Register-ScheduledTask -TaskName 'AJEITA' -Action $action -Trigger $trigger -Settings $settings
+  ```
+
+  Ela so dispara depois do login, nao antes. Gerenciar a tarefa:
+
+  ```powershell
+  Get-ScheduledTask -TaskName AJEITA | Get-ScheduledTaskInfo   # estado e ultimo resultado
+  Start-ScheduledTask -TaskName AJEITA                         # iniciar agora
+  Stop-ScheduledTask -TaskName AJEITA                          # parar (encerre tambem o node.exe do bot)
+  Unregister-ScheduledTask -TaskName AJEITA -Confirm:$false    # remover
+  ```
+
+  Nao inicie a tarefa com o bot ja rodando: duas instancias disputam a mesma sessao do WhatsApp.
+  Tambem da para editar pela janela (`taskschd.msc`).
+- Posts do Facebook que o yt-dlp nao le ("Cannot parse data") usam um fallback com o Chrome
+  (`src/facebook-fallback.js`, requer `CHROME_PATH`). Para baixar um link antigo, responda a
+  mensagem dele com "ajeita".
 - Painel com status, pedidos e logs: `http://127.0.0.1:PORTA/logs`. O historico fica em `data/`.
 - Alertas do Windows e uma mensagem no seu proprio WhatsApp avisam quando ha desconexao ou 3 falhas seguidas.
 
