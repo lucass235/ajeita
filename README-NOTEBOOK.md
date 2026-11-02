@@ -235,6 +235,8 @@ Alternativa mais leve: o bot roda direto com Node, sem Docker Desktop.
 - Posts do Facebook que o yt-dlp nao le ("Cannot parse data") usam um fallback com o Chrome
   (`src/facebook-fallback.js`, requer `CHROME_PATH`). Para baixar um link antigo, responda a
   mensagem dele com "ajeita".
+- Por padrao videos longos sao cortados em partes de 90 s. Escreva "ajeita completo" (ou inteiro/full)
+  para receber o video inteiro em um unico arquivo; acima de 14 MB ele vai como documento.
 - Painel com status, pedidos e logs: `http://127.0.0.1:PORTA/logs`. O historico fica em `data/`.
 - Alertas do Windows e uma mensagem no seu proprio WhatsApp avisam quando ha desconexao ou 3 falhas seguidas.
 

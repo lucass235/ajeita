@@ -114,3 +114,18 @@ test('le o link da mensagem respondida mesmo quando getQuotedMessage falha', asy
     assert.equal((await findLinksForCommand(viaHistory, chat))[0].link, 'https://vt.tiktok.com/ZSx/');
   } finally { console.warn = warn; }
 });
+
+test('aceita links do YouTube', () => {
+  assert.ok(normalizeLink('https://www.youtube.com/watch?v=zc_bf3IV6JY&list=RDPOdv-1X7irk&index=7'));
+  assert.ok(normalizeLink('https://youtu.be/zc_bf3IV6JY'));
+  assert.ok(normalizeLink('https://m.youtube.com/shorts/abc123'));
+  assert.equal(normalizeLink('https://notyoutube.com/watch?v=x'), null);
+});
+
+test('detecta o pedido de video completo', () => {
+  const { wantsFullVideo } = require('../src/link');
+  assert.equal(wantsFullVideo('Ajeita completo'), true);
+  assert.equal(wantsFullVideo('ajeita o vídeo inteiro https://youtu.be/abc'), true);
+  assert.equal(wantsFullVideo('ajeita'), false);
+  assert.equal(wantsFullVideo('ajeita https://exemplo.com/completo'), false);
+});

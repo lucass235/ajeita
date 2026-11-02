@@ -1,7 +1,7 @@
 'use strict';
 
 // Lista fechada de dominios permitidos: impede buscar URLs arbitrarias.
-const ALLOWED_HOSTS = ['facebook.com', 'fb.watch', 'tiktok.com', 'instagram.com'];
+const ALLOWED_HOSTS = ['facebook.com', 'fb.watch', 'tiktok.com', 'instagram.com', 'youtube.com', 'youtu.be'];
 
 function isAllowedHost(hostname) {
   const name = String(hostname || '').toLowerCase().replace(/\.$/, '');
@@ -66,6 +66,13 @@ function isAjeita(body) {
   // Inclui formas naturais e o erro comum com G, mas evita aproximacao generica
   // que poderia confundir palavras como "aceita" com um pedido de download.
   return words.some(word => /^(?:a[gj]eita+r?|a[gj]eite)$/.test(word));
+}
+
+// Palavra extra no pedido ("ajeita completo") para receber o video inteiro, sem cortar em partes.
+function wantsFullVideo(body) {
+  if (typeof body !== 'string') return false;
+  const text = body.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/https?:\/\/\S+/g, ' ');
+  return (text.match(/[a-z]+/g) || []).some(word => /^(?:completo|completa|inteiro|inteira|full)$/.test(word));
 }
 
 async function findLinkForCommand(command, chat, { maxAgeHours = 72, now = Date.now() } = {}) {
@@ -137,4 +144,4 @@ async function findLinksForCommand(command, chat, { maxAgeHours = 72, now = Date
   return unique;
 }
 
-module.exports = { isAllowedHost, normalizeLink, extractVideoLink, extractVideoLinks, getSerializedMessageId, isAjeita, findLinkForCommand, findLinksForCommand };
+module.exports = { isAllowedHost, normalizeLink, extractVideoLink, extractVideoLinks, getSerializedMessageId, isAjeita, wantsFullVideo, findLinkForCommand, findLinksForCommand };

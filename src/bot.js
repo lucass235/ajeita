@@ -8,7 +8,7 @@ const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const { ReliableRemoteAuth } = require('./remote-auth');
 const { GcsSessionStore } = require('./gcs-store');
 const qrcode = require('qrcode-terminal');
-const { isAjeita, extractVideoLinks, getSerializedMessageId, findLinksForCommand } = require('./link');
+const { isAjeita, wantsFullVideo, extractVideoLinks, getSerializedMessageId, findLinksForCommand } = require('./link');
 const { downloadVideo } = require('./downloader');
 const { createStatusServer } = require('./status');
 const { prepareRuntimeAuth } = require('./runtime-auth');
@@ -331,7 +331,7 @@ async function processJob(job) {
     }
     if (shuttingDown) return;
     if (settings.sendProgress && job.sendProgress !== false) await safeText(job.chatId, 'perai');
-    result = await downloadVideo(job.link, settings);
+    result = await downloadVideo(job.link, { ...settings, fullVideo: job.fullVideo });
     console.log('Video preparado para WhatsApp: ' + Math.round(result.bytes / 1024) + ' KB | ' +
       result.parts.length + ' parte(s) | download+conversao em ' + ((Date.now() - startedAt) / 1000).toFixed(1) + 's');
     stage = 'envio ao WhatsApp';
@@ -481,7 +481,7 @@ client.on('message_create', async message => {
     for (const [index, item] of items.entries()) {
       const request = addRequest({ ...requestInfo, status: 'na fila', link: item.link, host: new URL(item.link).hostname,
         batch: items.length, batchPosition: index + 1, repliesToLink: Boolean(item.messageId) });
-      queue.push({ chatId, link: item.link, quotedMessageId: item.messageId, request, sendProgress: index === 0 });
+      queue.push({ chatId, link: item.link, quotedMessageId: item.messageId, request, sendProgress: index === 0, fullVideo: wantsFullVideo(message.body) });
     }
     console.log('Pedido de ' + who + ' na fila | ' + items.length + ' link(s) | posicao ' + queue.length);
     void drainQueue();
