@@ -99,7 +99,7 @@ const persistRequests = () => saveRequests(recentRequests);
 function addRequest(info) {
   const request = { id: ++requestSeq, time: new Date().toISOString(), ...info };
   recentRequests.unshift(request);
-  if (recentRequests.length > 50) recentRequests.pop();
+  if (recentRequests.length > 500) recentRequests.pop();
   persistRequests();
   return request;
 }
@@ -125,7 +125,8 @@ async function getDiagnostics() {
     requests: recentRequests,
     settings: {
       allowGroups: settings.allowGroups, allowOtherPeople: settings.allowOtherPeople,
-      cooldownSeconds: settings.chatCooldownSeconds, maxQueue: settings.maxQueue, maxFileMB: settings.maxFileMB
+      cooldownSeconds: settings.chatCooldownSeconds, maxQueue: settings.maxQueue, maxFileMB: settings.maxFileMB,
+      supervised: process.env.AJEITA_SUPERVISED === '1'
     }
   };
   if (!result.browserConnected || result.pageClosed) return result;
@@ -155,12 +156,35 @@ const httpServer = port > 0 ? createStatusServer({
   adminToken: process.env.ADMIN_TOKEN || '',
   getStatus: () => session,
   getDiagnostics,
-  getLogs
+  getLogs,
+  actions: {
+    async restart() {
+      console.warn('Reinicio solicitado pelo painel.');
+      setTimeout(() => void shutdown('painel'), 300);
+      return { message: process.env.AJEITA_SUPERVISED === '1' ? 'Reiniciando... o painel volta em instantes.' : 'Encerrando (sem supervisor, inicie de novo manualmente).' };
+    },
+    async 'clear-queue'() {
+      const dropped = queue.splice(0, queue.length);
+      for (const job of dropped) {
+        job.request.status = 'ignorado';
+        job.request.detail = 'Fila limpa pelo painel';
+      }
+      persistRequests();
+      console.warn('Fila limpa pelo painel: ' + dropped.length + ' pedido(s) removido(s).');
+      return { message: dropped.length + ' pedido(s) removido(s) da fila.' };
+    },
+    async 'toggle-groups'() {
+      settings.allowGroups = !settings.allowGroups;
+      console.warn('Grupos ' + (settings.allowGroups ? 'ativados' : 'desativados') + ' pelo painel (ate reiniciar).');
+      return { message: 'Grupos ' + (settings.allowGroups ? 'ativados' : 'desativados') + ' (ate reiniciar o bot).' };
+    }
+  }
 }) : null;
 
 client.on('qr', qr => {
   session.phase = 'pairing';
   session.qr = qr;
+  notify('AJEITA precisa de QR', 'Escaneie o QR code no painel para conectar o WhatsApp.', 'qr');
   if (port > 0 && process.env.ADMIN_TOKEN) {
     console.log('QR disponivel no painel privado /pair. Nunca compartilhe credenciais.');
   } else {

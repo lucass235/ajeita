@@ -18,7 +18,7 @@ async function isWhatsAppWebReady(client, timeoutMs=5000) {
 }
 
 function createBrowserHealthMonitor({client,isEnabled,onUnhealthy,intervalMs=10000,timeoutMs=5000,maxFailures=3,logger=console}) {
-  let failures=0, busy=false, stopped=false;
+  let failures=0, busy=false, stopped=false, lastTick=Date.now();
   async function check() {
     if (busy || stopped || !isEnabled()) return;
     busy=true;

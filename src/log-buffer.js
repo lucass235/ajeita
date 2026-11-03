@@ -62,7 +62,7 @@ function getLogs({ after = 0, level } = {}) {
 function loadRequests() {
   try {
     const list = JSON.parse(fs.readFileSync(requestsFile, 'utf8'));
-    return Array.isArray(list) ? list.slice(0, 50) : [];
+    return Array.isArray(list) ? list.slice(0, 500) : [];
   } catch { return []; }
 }
 
