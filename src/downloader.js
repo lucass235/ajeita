@@ -6,6 +6,7 @@ const os = require('node:os');
 const { spawn } = require('node:child_process');
 const { normalizeLink } = require('./link');
 const { downloadFacebookFallback } = require('./facebook-fallback');
+const { downloadTikTokSlideshow, looksLikeTikTokSlideshowError, extractPostUrl, isTikTokHost } = require('./tiktok-slideshow');
 
 function runProcess(command, args, { timeoutMs = 180000 } = {}) {
   return new Promise((resolve, reject) => {
@@ -41,6 +42,13 @@ function runProcess(command, args, { timeoutMs = 180000 } = {}) {
       } else finish(null);
     });
   });
+}
+
+async function hasVideoStream(filepath) {
+  const output = await runProcess('ffprobe', [
+    '-v', 'error', '-select_streams', 'v', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', filepath
+  ], { timeoutMs: 30000 });
+  return /video/.test(output);
 }
 
 function getFriendlyError(error) {
@@ -191,21 +199,49 @@ async function downloadVideo(link, options = {}) {
       '-o', path.join(tempDir, 'video.%(ext)s'),
       url
     ];
+    const hostname = new URL(url).hostname;
+    const isTikTok = isTikTokHost(hostname);
+    // Post de fotos do TikTok: o yt-dlp nao baixa as fotos. Monta um video com elas e a musica.
+    const slideshowFallback = async (postUrl, originalError) => {
+      try {
+        await downloadTikTokSlideshow(url, tempDir, {
+          pythonBin, runProcess, postUrl,
+          timeoutMs: timeoutSeconds * 1000, maxFileMB, maxDurationSeconds,
+          cookiesFile: cookieArgs[1]
+        });
+      } catch (error) {
+        // Se nao era mesmo um post de fotos, o erro util e o do yt-dlp.
+        if (error?.code === 'NOT_SLIDESHOW' && originalError) throw originalError;
+        throw error;
+      }
+    };
     let output;
     try {
       output = await runProcess(pythonBin, args, { timeoutMs: timeoutSeconds * 1000 });
     } catch (error) {
-      // Posts (nao reels) do Facebook: o extrator do yt-dlp costuma quebrar com "Cannot parse data".
-      if (!/(^|\.)facebook\.com$/i.test(new URL(url).hostname) || !/Cannot parse data/i.test(error.message)) throw error;
-      output = '';
-      await downloadFacebookFallback(url, tempDir, {
-        chromePath: process.env.CHROME_PATH,
-        runProcess,
-        timeoutMs: timeoutSeconds * 1000,
-        maxFileMB
-      });
+      if (isTikTok && looksLikeTikTokSlideshowError(error.message)) {
+        output = '';
+        await slideshowFallback(extractPostUrl(error.message), error);
+      } else if (/(^|\.)facebook\.com$/i.test(hostname) && /Cannot parse data|only available for registered users/i.test(error.message)) {
+        // Posts (nao reels) do Facebook: o extrator do yt-dlp costuma quebrar com "Cannot parse data"
+        // ou pedir login ("only available for registered users") em videos que o navegador abre normalmente.
+        output = '';
+        await downloadFacebookFallback(url, tempDir, {
+          chromePath: process.env.CHROME_PATH,
+          runProcess,
+          timeoutMs: timeoutSeconds * 1000,
+          maxFileMB
+        });
+      } else throw error;
     }
-    const files = await fs.readdir(tempDir);
+    let files = await fs.readdir(tempDir);
+    // Slideshow aceito pelo yt-dlp como "video": ele devolve so o audio remuxado em
+    // video.mp4, sem fotos. Sem faixa de video, o post de fotos e montado a partir das imagens.
+    const downloaded = files.find(file => /^video.*\.mp4$/i.test(file));
+    if (isTikTok && downloaded && !await hasVideoStream(path.join(tempDir, downloaded))) {
+      await slideshowFallback(null, null);
+      files = await fs.readdir(tempDir);
+    }
     const filename = files.find(file => /^video.*\.mp4$/i.test(file));
     if (!filename) {
       // O yt-dlp sai com sucesso, sem arquivo, quando o video passa de --max-filesize
